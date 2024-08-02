@@ -1,5 +1,5 @@
 on: push
-name: Build and deploy GH Pages
+name: Zola build and deploy
 jobs:
   build:
     runs-on: ubuntu-latest
