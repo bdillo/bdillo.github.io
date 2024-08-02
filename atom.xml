@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="en">
+    <title>bdillo</title>
+    <subtitle>bdillo&#x27;s feed</subtitle>
+    <link rel="self" type="application/atom+xml" href="https://bdillo.dev/atom.xml"/>
+    <link rel="alternate" type="text/html" href="https://bdillo.dev"/>
+    <generator uri="https://www.getzola.org/">Zola</generator>
+    <updated>2024-08-01T00:00:00+00:00</updated>
+    <id>https://bdillo.dev/atom.xml</id>
+    <entry xml:lang="en">
+        <title>test post</title>
+        <published>2024-08-01T00:00:00+00:00</published>
+        <updated>2024-08-01T00:00:00+00:00</updated>
+        
+        <author>
+          <name>
+            
+              Unknown
+            
+          </name>
+        </author>
+        
+        <link rel="alternate" type="text/html" href="https://bdillo.dev/blog/test-post/"/>
+        <id>https://bdillo.dev/blog/test-post/</id>
+        
+        <content type="html" xml:base="https://bdillo.dev/blog/test-post/">&lt;p&gt;Blah blah blah test blah blah blah.&lt;&#x2F;p&gt;
+&lt;p&gt;Some source code:&lt;&#x2F;p&gt;
+&lt;pre data-lang=&quot;rust&quot; style=&quot;background-color:#2b303b;color:#c0c5ce;&quot; class=&quot;language-rust &quot;&gt;&lt;code class=&quot;language-rust&quot; data-lang=&quot;rust&quot;&gt;&lt;span style=&quot;color:#b48ead;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; x = &lt;&#x2F;span&gt;&lt;span style=&quot;color:#d08770;&quot;&gt;10&lt;&#x2F;span&gt;&lt;span&gt;;
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Something else, blah blah blah, test test test test test. Something else
+very interesting. Another thing.&lt;&#x2F;p&gt;
+</content>
+        
+    </entry>
+</feed>
