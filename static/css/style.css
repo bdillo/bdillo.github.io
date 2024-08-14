@@ -30,6 +30,7 @@ h4,
 h5,
 h6 {
   line-height: 1.2;
+  color: var(--accent_color);
 }
 
 a {
@@ -73,4 +74,31 @@ hr {
 
 .nav_prefix {
   color: var(--accent_color);
+}
+
+pre {
+  padding: 1rem;
+  overflow: auto;
+}
+/* The line numbers already provide some kind of left/right padding */
+pre[data-linenos] {
+  padding: 1rem 0;
+}
+pre table td {
+  padding: 0;
+}
+/* The line number cells */
+pre table td:nth-of-type(1) {
+  text-align: center;
+  user-select: none;
+}
+pre mark {
+  /* If you want your highlights to take the full width */
+  display: block;
+  /* The default background colour of a mark is bright yellow */
+  background-color: rgba(254, 252, 232, 0.9);
+}
+pre table {
+  width: 100%;
+  border-collapse: collapse;
 }
