@@ -56,26 +56,7 @@ hr {
   margin: 20px 0;
 }
 
-.nav_bar {
-  font-size: 24px;
-  text-align: left;
-  margin-bottom: 32px;
-}
-
-.nav_list {
-  list-style: none;
-  display: flex;
-  padding: 0;
-}
-
-.nav_item {
-  margin: 0 20px 0 0;
-}
-
-.nav_prefix {
-  color: var(--accent_color);
-}
-
+/* for code blocks */
 pre {
   padding: 1rem;
   overflow: auto;
@@ -95,10 +76,29 @@ pre table td:nth-of-type(1) {
 pre mark {
   /* If you want your highlights to take the full width */
   display: block;
-  /* The default background colour of a mark is bright yellow */
-  background-color: rgba(254, 252, 232, 0.9);
 }
 pre table {
   width: 100%;
   border-collapse: collapse;
+}
+
+/* classes */
+.nav_bar {
+  font-size: 24px;
+  text-align: left;
+  margin-bottom: 32px;
+}
+
+.nav_list {
+  list-style: none;
+  display: flex;
+  padding: 0;
+}
+
+.nav_item {
+  margin: 0 20px 0 0;
+}
+
+.nav_prefix {
+  color: var(--accent_color);
 }
