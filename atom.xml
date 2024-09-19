@@ -1,0 +1,430 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="en">
+    <title>bdillo</title>
+    <subtitle>bdillo&#x27;s feed</subtitle>
+    <link rel="self" type="application/atom+xml" href="https://bdillo.dev/atom.xml"/>
+    <link rel="alternate" type="text/html" href="https://bdillo.dev"/>
+    <generator uri="https://www.getzola.org/">Zola</generator>
+    <updated>2024-09-17T00:00:00+00:00</updated>
+    <id>https://bdillo.dev/atom.xml</id>
+    <entry xml:lang="en">
+        <title>TUN, TAP, Bridges</title>
+        <published>2024-09-17T00:00:00+00:00</published>
+        <updated>2024-09-17T00:00:00+00:00</updated>
+        
+        <author>
+          <name>
+            
+              Unknown
+            
+          </name>
+        </author>
+        
+        <link rel="alternate" type="text/html" href="https://bdillo.dev/blog/tun-tap-bridges/"/>
+        <id>https://bdillo.dev/blog/tun-tap-bridges/</id>
+        
+        <content type="html" xml:base="https://bdillo.dev/blog/tun-tap-bridges/">&lt;p&gt;I was recently exploring &lt;a href=&quot;https:&#x2F;&#x2F;firecracker-microvm.github.io&#x2F;&quot;&gt;firecracker&lt;&#x2F;a&gt;, a very minimal VM manager, for use in a
+home lab setup to make provisioning new VMs very quick. When reading the documentation, I saw that the guest networking
+is exposed as a TAP device to the host operating system. I know a little bit about TUN&#x2F;TAP devices, but most of my
+experience has been running various &lt;code&gt;ip&lt;&#x2F;code&gt; commands and tinkering with things until they seem to be working. I wanted to
+dive in a little more to see how various virtual networking things worked under the hood as I really had no idea!&lt;&#x2F;p&gt;
+&lt;h1 id=&quot;network-interfaces&quot;&gt;Network Interfaces&lt;&#x2F;h1&gt;
+&lt;p&gt;First off, what actually is a network interface in linux? Basically a network interface is a
+software representation of a physical or virtual network device. If you&#x27;ve ever run a command like &lt;code&gt;ip a&lt;&#x2F;code&gt; or &lt;code&gt;ifconfig&lt;&#x2F;code&gt;,
+you&#x27;ve seen your network interfaces listed out.  Usually when you are writing a basic networked application you don&#x27;t
+actually care about the interfaces directly - you would just create a socket and bind&#x2F;connect&#x2F;do whatever you want.
+Where the traffic ingresses&#x2F;egresses the machine is dependent on the kernel&#x27;s routing policies and  routing table (check
+out &lt;code&gt;ip rule list&lt;&#x2F;code&gt; and &lt;code&gt;ip route list&lt;&#x2F;code&gt;). This all seems straightforward enough for a physical interface, when I list it
+out with &lt;code&gt;ip a&lt;&#x2F;code&gt; I can see my NIC&#x27;s MAC address and other information, which maps cleanly in my mind to a physical
+component of my computer. So what are the virtual interfaces exactly?&lt;&#x2F;p&gt;
+&lt;h1 id=&quot;virtual-interfaces&quot;&gt;Virtual Interfaces&lt;&#x2F;h1&gt;
+&lt;p&gt;It turns out that sometimes we want something that looks and acts like a physical network interface
+but we control it from software without having to hack around in the kernel&#x27;s network stack directly. This is where
+virtual interfaces are useful. Virtual interfaces are commonly used for VPN software and virtualization&#x2F;container
+networking. Probably the most common virtual interface that people are familiar with is the loopback interface. When
+we send something to &lt;code&gt;127.0.0.1&lt;&#x2F;code&gt;, the packet eventually reaches the loopback interface. We can see the code for it
+&lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;torvalds&#x2F;linux&#x2F;blob&#x2F;a430d95c5efa2b545d26a094eb5f624e36732af0&#x2F;drivers&#x2F;net&#x2F;loopback.c#L69-L93&quot;&gt;here&lt;&#x2F;a&gt;,
+basically rather than the packet being written to a physical network device, it&#x27;s just &quot;looped&quot; back into the kernel&#x27;s
+networking stack with the call to &lt;a href=&quot;https:&#x2F;&#x2F;docs.kernel.org&#x2F;networking&#x2F;kapi.html#c.netif_rx&quot;&gt;&lt;code&gt;__netif_rx&lt;&#x2F;code&gt;&lt;&#x2F;a&gt;.&lt;&#x2F;p&gt;
+&lt;p&gt;Cool, what about other types of virtual interfaces? Specifically, I have been looking at
+&lt;a href=&quot;https:&#x2F;&#x2F;docs.kernel.org&#x2F;networking&#x2F;tuntap.html&quot;&gt;TUN&#x2F;TAP&lt;&#x2F;a&gt; interfaces. Here&#x27;s the definition from the docs:&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;TUN&#x2F;TAP provides packet reception and transmission for user space programs. It can be seen as a simple Point-to-Point
+or Ethernet device, which, instead of receiving packets from physical media, receives them from user space program and
+instead of sending packets via physical media writes them to the user space program.&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;Seems straightforward enough, a TUN&#x2F;TAP device is a virtual networking interface that a userspace process simply reads
+from and writes to. Note that TUN&#x2F;TAP are two different types of devices, a TUN devices works at the IP layer, whereas a
+TAP devices works at the ethernet layer. When a userspace process attaches to a TUN&#x2F;TAP device it simply receives the
+raw packets&#x2F;frames routed to that interface and does whatever it wants with them. When a userspace process writes a
+packet&#x2F;frame to a TUN&#x2F;TAP devices, that packet&#x2F;frame is simply injected into the kernel&#x27;s network stack where it will be
+directed by the routing policies and routing tables, similar to if the packet&#x2F;frame was received from a physical
+interface.&lt;&#x2F;p&gt;
+&lt;h1 id=&quot;tun-use-case&quot;&gt;TUN Use Case&lt;&#x2F;h1&gt;
+&lt;p&gt;So how does this all work in something like a VPN daemon, using a TUN device? Let&#x27;s look at how we&#x27;d implement a simple
+peer to peer connection in our hypothetical VPN daemon. The daemon would start up, create the TUN interface (if it
+didn&#x27;t already exist) attach itself to it, then bring the TUN interface up. Note that a TUN&#x2F;TAP interface will only be
+up if a process is attached to it, otherwise the packets&#x2F;frames have nowhere to go! We would then configure our routing
+so traffic we want to go through the VPN is routed through our TUN interface. If we were using a VPN for a more
+privacy-oriented use case (e.g. we want all our traffic to go through the VPN tunnel, where a VPN server we are
+connected to that hopefully isn&#x27;t keeping logs will send our traffic out to the internet, then send the response back
+through the tunnel to us) then we would route all of our internet traffic through the TUN interface. If we were
+using a VPN to connect to, let&#x27;s say a remote network under the 10.0.0.0&#x2F;24 subnet, we would update our routing tables
+to direct traffic heading to 10.0.0.0&#x2F;24 to our TUN interface. The daemon would open a normal socket (usually UDP for
+VPNs) with the other side being our remote VPN machine, running the same daemon. Traffic local to our machine that is
+routed through the TUN interface will be received by the daemon running on the same machine. The daemon will take that raw,
+unencrypted traffic, encrypt it and do whatever other VPN stuff, then send it over the socket it created to the remote
+VPN machine. The remote VPN machine receives that traffic, where it goes through the normal networking paths and ends up
+in the socket where the VPN daemon is listening. It then decrypts the traffic and writes it to the TUN interface, which
+effectively writes it into the kernel&#x27;s networking stack as if we received a normal, non-VPN encrypted, packet.&lt;&#x2F;p&gt;
+&lt;p&gt;If I didn&#x27;t explain this well, here is an example from the &lt;a href=&quot;https:&#x2F;&#x2F;docs.kernel.org&#x2F;networking&#x2F;tuntap.html&quot;&gt;TUN&#x2F;TAP docs
+FAQ&lt;&#x2F;a&gt;:&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Let’s say that you configured IPv6 on the tap0, then whenever the kernel sends an IPv6 packet to tap0, it is passed to
+the application (VTun for example). The application encrypts, compresses and sends it to the other side over TCP or UDP.
+The application on the other side decompresses and decrypts the data received and writes the packet to the TAP device,
+the kernel handles the packet like it came from real physical device.&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;And another from a &lt;a href=&quot;https:&#x2F;&#x2F;lxd.me&#x2F;a-simple-vpn-tunnel-with-tun-device-demo-and-some-basic-concepts&quot;&gt;good blog&lt;&#x2F;a&gt; I found
+explaining this use case:&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;In a nutshell, the process for client side tunneling is:&lt;&#x2F;p&gt;
+&lt;ol&gt;
+&lt;li&gt;Open an UDP socket whose other side is the server.&lt;&#x2F;li&gt;
+&lt;li&gt;Create the &lt;code&gt;tun&lt;&#x2F;code&gt; device, configure it and bring it up.&lt;&#x2F;li&gt;
+&lt;li&gt;Configure routing table.&lt;&#x2F;li&gt;
+&lt;li&gt;Read packets from &lt;code&gt;tun&lt;&#x2F;code&gt; device, encrypt, send to server via socket created in 1st step; And read from the socket,
+decrypt, write back to &lt;code&gt;tun&lt;&#x2F;code&gt; device. This step goes on and on.&lt;&#x2F;li&gt;
+&lt;&#x2F;ol&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;h1 id=&quot;tap-use-case&quot;&gt;TAP Use Case&lt;&#x2F;h1&gt;
+&lt;p&gt;Let&#x27;s check out another use case, using a TAP device. This time rather than looking at a hypothetical VPN daemon, let&#x27;s
+look at Firecracker. We can see their brief design doc
+&lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;firecracker-microvm&#x2F;firecracker&#x2F;blob&#x2F;main&#x2F;docs&#x2F;design.md&quot;&gt;here&lt;&#x2F;a&gt;, where it says:&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Firecracker emulated network devices are backed by TAP devices on the host. To make use of Firecracker, we expect our
+customers to leverage on-host networking solutions.&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;and&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Firecracker provides VirtIO&#x2F;block and VirtIO&#x2F;net emulated devices, along with the application of rate limiters to each
+volume and network interface to make sure host hardware resources are used fairly by multiple microVMs.&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;Ok, so Firecracker exposes a &lt;a href=&quot;https:&#x2F;&#x2F;wiki.osdev.org&#x2F;Virtio&quot;&gt;virtio&lt;&#x2F;a&gt; device to the guest OS, which is actually backed by
+a TAP device in the host OS. Firecracker guests&#x27; packets are routed to the virtio device, which firecracker then writes
+to the corresponding TAP device in the host OS, which are written into the host&#x27;s networking stack as if it had received
+them from a physical interface. From here, the host OS can be configured as necessary (via iptables or bridges, which we
+will cover next) to handle how the packets are dealt with. This is where the &quot;we expect our customers to leverage
+on-host networking solutions&quot; part from the above docs comes in. The virtio net device for firecracker is defined
+&lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;firecracker-microvm&#x2F;firecracker&#x2F;blob&#x2F;a4b3d932ced21d1ae73cf5c1690cb746095bea2f&#x2F;src&#x2F;vmm&#x2F;src&#x2F;devices&#x2F;virtio&#x2F;net&#x2F;device.rs#L105-L110&quot;&gt;here&lt;&#x2F;a&gt;.
+And the actual implementation of writing frames from the guest to the host&#x27;s TAP device in the method
+&lt;code&gt;write_to_descriptor_chain&lt;&#x2F;code&gt;. It looks like the actual memory management is done by the Rust crate &lt;code&gt;vm_memory&lt;&#x2F;code&gt;, there is
+a brief description of how the memory management is handled from their
+&lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;rust-vmm&#x2F;vm-memory&#x2F;blob&#x2F;54c67221bdfbc88a38e7671d4ef790f67bde3dee&#x2F;DESIGN.md?plain=1#L89-L123&quot;&gt;docs&lt;&#x2F;a&gt;,
+it&#x27;s an interesting little thing to read! Firecracker has some short guides on how you&#x27;d want to set up your hosts
+networking in their &lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;firecracker-microvm&#x2F;firecracker&#x2F;blob&#x2F;main&#x2F;docs&#x2F;network-setup.md&quot;&gt;docs&lt;&#x2F;a&gt; as well.&lt;&#x2F;p&gt;
+&lt;p&gt;So why is a TAP device used here over a TUN? Because we are emulating hardware (that&#x27;s what firecracker&#x27;s virtio device
+is doing), firecracker needs to work at the same level. The hardware works at the ethernet layer and so must our
+virtualized device. TUN devices work great for situations like our VPN daemon above where we are just routing traffic,
+but this is insufficient for emulating a hardware network interface! This is why we see TAP devices used more in
+virtualization.&lt;&#x2F;p&gt;
+&lt;h1 id=&quot;bridges&quot;&gt;Bridges&lt;&#x2F;h1&gt;
+&lt;p&gt;So far we&#x27;ve talked about TUN&#x2F;TAP virtual devices and the loopback interface. Another commonly used virtual
+network interface is a bridge device. I&#x27;m bringing this up because it&#x27;s mentioned in the Firecracker &lt;a href=&quot;https:&#x2F;&#x2F;github.com&#x2F;firecracker-microvm&#x2F;firecracker&#x2F;blob&#x2F;main&#x2F;docs&#x2F;network-setup.md&quot;&gt;network setup
+docs&lt;&#x2F;a&gt; but isn&#x27;t explained much
+there, and I didn&#x27;t know much about them.&lt;&#x2F;p&gt;
+&lt;p&gt;A bridge interface just acts like a physical switch. Switches act at the ethernet layer - you send an ethernet frame to
+it and if the device with the destination MAC address of the ethernet frame is connected to the switch, the frame gets
+sent to that device. The switch itself keeps track of what MAC addresses are connected to which physical port so it
+knows where to forward the traffic. A bridge interface is basically exactly the same, but virtual. Instead of physically
+plugging a device in to it, you add an interface (like a TAP device or a physical one) and you can think of this like
+plugging an ethernet cable from each interface into a physical switch. I haven&#x27;t played with this yet in firecracker as
+it seems some people have to &lt;a href=&quot;https:&#x2F;&#x2F;devopschops.com&#x2F;blog&#x2F;communicating-between-firecracker-microvms-using-bridges&#x2F;&quot;&gt;do some
+tweaking&lt;&#x2F;a&gt; to get everything to
+work correctly for VM-to-VM communication. I&#x27;ll cross that bridge (ha) when I get there!&lt;&#x2F;p&gt;
+&lt;h1 id=&quot;summary&quot;&gt;Summary&lt;&#x2F;h1&gt;
+&lt;ul&gt;
+&lt;li&gt;A network interface is a software representation of either a physical or virtual network device.&lt;&#x2F;li&gt;
+&lt;li&gt;Virtual interfaces act like physical ones but have some special logic in them to make them useful without having to
+directly mess around in the kernel&#x27;s network stack.&lt;&#x2F;li&gt;
+&lt;li&gt;TUN&#x2F;TAP devices allow us to attach a program to in order to read&#x2F;write raw ethernet frames&#x2F;IP packets and process
+them as we see fit.&lt;&#x2F;li&gt;
+&lt;li&gt;TUN devices work at the IP layer, TAP devices work at the ethernet layer.&lt;&#x2F;li&gt;
+&lt;li&gt;TUNs are commonly used for routing use cases, like VPN clients.&lt;&#x2F;li&gt;
+&lt;li&gt;TAPs are commonly used in virtualization as they work on the same layer as a hardware interface would (ethernet layer).&lt;&#x2F;li&gt;
+&lt;li&gt;Bridges are basically just virtual switches, we can add interfaces to the bridge and we can think of it like
+connecting an ethernet cable from our interfaces to a physical switch.&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+</content>
+        
+    </entry>
+    <entry xml:lang="en">
+        <title>KDFs, Fast and Slow</title>
+        <published>2024-09-02T00:00:00+00:00</published>
+        <updated>2024-09-02T00:00:00+00:00</updated>
+        
+        <author>
+          <name>
+            
+              Unknown
+            
+          </name>
+        </author>
+        
+        <link rel="alternate" type="text/html" href="https://bdillo.dev/blog/kdfs-fast-and-slow/"/>
+        <id>https://bdillo.dev/blog/kdfs-fast-and-slow/</id>
+        
+        <content type="html" xml:base="https://bdillo.dev/blog/kdfs-fast-and-slow/">&lt;h1 id=&quot;kdfs&quot;&gt;KDFs&lt;&#x2F;h1&gt;
+&lt;p&gt;I was just picking out a KDF (key derivation function) to use in a program I was writing the other day and I thought it would be interesting to explain what a KDF is, the different types of KDFs, and the differences in the functionality they provide.&lt;&#x2F;p&gt;
+&lt;p&gt;A KDF is a cryptographic algorithm used to derive one or more cryptographic keys from a given secret input. These secret inputs can be things like another secret key, a password, or a group element from a Diffie-Hellman key exchange. Because passwords &#x2F; key exchange outputs aren&#x27;t uniformly random (e.g. passwords are made up of words and characters, not just random bits) they aren&#x27;t suitable for use in other cryptographic algorithms that expect a uniformly random secret directly (see this &lt;a href=&quot;https:&#x2F;&#x2F;crypto.stackexchange.com&#x2F;questions&#x2F;95716&#x2F;difference-between-non-uniformly-random-and-uniformly-random&quot;&gt;Crypto StackExchange&lt;&#x2F;a&gt; answer for a better explanation). This is where a KDF can help us.&lt;&#x2F;p&gt;
+&lt;p&gt;KDFs have the nice property of taking nonuniformly random input of arbitrary length and creating a uniformly random output of arbitrary length. So we can send a password through a KDF and get an output which is suitable for use in other cryptographic algorithms. Pretty neat! Keep in mind that the entropy level of the input is still super important - running a poor password (e.g. the word &quot;password&quot;) through a KDF will still produce a uniformly random output, but this output has low entropy. Garbage entropy in, garbage entropy out. Because a KDF is deterministic (which we&#x27;ll see in some of the examples below), having sufficient entropy for the input is still important.&lt;&#x2F;p&gt;
+&lt;p&gt;Cool, now we know what a KDF is. How are they used in practice? Generally KDFs broadly fall into two categories:&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;KDFs suitable for key derivation&lt;&#x2F;li&gt;
+&lt;li&gt;KDFs suitable for password storage&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;p&gt;We&#x27;ll go over what these two categories mean exactly in a moment, but first we should point out a major difference in behavior for these two use cases. Basically, KDFs used for key derivation are fast, and KDFs used for password storage are (purposefully) slow. Also note that you certainly can use a slow KDF for key derivation, but it will be slower and may not provide any additional benefit depending on your use case!&lt;&#x2F;p&gt;
+&lt;h1 id=&quot;key-derivation&quot;&gt;Key Derivation&lt;&#x2F;h1&gt;
+&lt;p&gt;Taking a single secret key and deriving several more secret keys from it is a pretty common pattern in cryptography. Let&#x27;s briefly look at how this is used in the Signal protocol.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;signal-kdf-chains&quot;&gt;Signal KDF Chains&lt;&#x2F;h2&gt;
+&lt;p&gt;Signal uses what they call the &lt;a href=&quot;https:&#x2F;&#x2F;signal.org&#x2F;docs&#x2F;specifications&#x2F;doubleratchet&#x2F;&quot;&gt;Double Ratchet algorithm&lt;&#x2F;a&gt; to encrypt their messages. Here&#x27;s Signal&#x27;s description of the algorithm:&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;The Double Ratchet algorithm is used by two parties to exchange encrypted messages based on a shared secret key. Typically the parties will use some key agreement protocol (such as X3DH &lt;a href=&quot;https:&#x2F;&#x2F;signal.org&#x2F;docs&#x2F;specifications&#x2F;doubleratchet&#x2F;#ref-x3dh&quot;&gt;1&lt;&#x2F;a&gt;) to agree on the shared secret key. Following this, the parties will use the Double Ratchet to send and receive encrypted messages.&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;In the Double Ratchet algorithm, KDFs are used to form a &lt;a href=&quot;https:&#x2F;&#x2F;signal.org&#x2F;docs&#x2F;specifications&#x2F;doubleratchet&#x2F;#kdf-chains&quot;&gt;KDF chain&lt;&#x2F;a&gt;. If you read their specification, you&#x27;ll see the properties gained by using KDFs here (specifically, &lt;a href=&quot;https:&#x2F;&#x2F;signal.org&#x2F;docs&#x2F;specifications&#x2F;doubleratchet&#x2F;#recommended-cryptographic-algorithms&quot;&gt;HKDF&lt;&#x2F;a&gt;). There are tons of keys being generated in the background when you use Signal - each message is encrypted with its own unique key. KDFs are what make this possible, given the same state on both sides of the conversation (the root key and the chain keys), both parties can derive the same key (because HKDF is deterministic) that makes it possible to encrypt the message on one end of the conversation and decrypt it on the other. Then the state is updated and new keys are derived as messages are sent and received. Signal calls this the symmetric-key ratchet, one of the two ratchets from the algorithm name. Obviously there is a lot more that goes into the Signal protocol which you can read at the links above. Their specification is surprisingly readable, even for a non-expert like myself!&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;hash-function-vs-kdf&quot;&gt;Hash function vs KDF&lt;&#x2F;h2&gt;
+&lt;p&gt;The follow-up question to the above example of using a KDF is why even use KDFs at all? Can we just use a standard hash function like SHA-512 to hash a secret key, then use that hash output as a key? Well, you can actually get away using a hash function for this sometimes! For the differences here, I&#x27;ll defer to David Wong&#x27;s excellent book, &lt;a href=&quot;https:&#x2F;&#x2F;www.manning.com&#x2F;books&#x2F;real-world-cryptography&quot;&gt;Real-World Cryptography&lt;&#x2F;a&gt;:&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;HKDF is not the only way to derive multiple secrets from one secret. A more naive approach is to use hash functions. As hash functions do not expect a uniformly random input and produce uniformly random outputs, they are fit for the task. Hash functions are not perfect, though, as their interface does not take into account domain separation (no customization string argument) and their output length is fixed. Best practice is to avoid hash functions when you can use a KDF instead. Nonetheless, some well-accepted algorithms do use hash functions for this purpose. For example, you learned in chapter 7 about the Ed25519 signature scheme that hashes a 256-bit key with SHA-512 to produce two 256-bit keys.&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;So the rule of thumb here is to use KDFs over hash functions.&lt;&#x2F;p&gt;
+&lt;p&gt;Great, we saw a good example of how deriving new cryptographic keys from other keys can be useful in a real world situation and how a KDF can differ from a standard cryptographic hash function. Let&#x27;s look at the main use case for our &quot;slow&quot; KDFs: password storage.&lt;&#x2F;p&gt;
+&lt;h1 id=&quot;password-storage&quot;&gt;Password Storage&lt;&#x2F;h1&gt;
+&lt;p&gt;Hopefully we all know not to store passwords in cleartext, otherwise if they are compromised the attacker would know everyone&#x27;s passwords! If you&#x27;re unfamiliar with password storage, here&#x27;s a brief overview: usually the password storage being compromised and then used is mostly mitigated by storing passwords in a hashed format. A client would send their password in cleartext (hopefully over a secure medium like TLS; the hash itself isn&#x27;t sent because then it would &lt;a href=&quot;https:&#x2F;&#x2F;en.wikipedia.org&#x2F;wiki&#x2F;Pass_the_hash&quot;&gt;effectively become the password&lt;&#x2F;a&gt;), the server would then hash the password and compare the hash (hopefully in constant time to avoid timing attacks) to what it has stored in its database. If the hash matches, the password is correct. In this situation, if an attacker gains access to all the password hashes, they must first crack the passwords by guessing password inputs, hashing them, and seeing if anything matches. Ideally we would be able to &lt;a href=&quot;https:&#x2F;&#x2F;blog.cryptographyengineering.com&#x2F;2018&#x2F;10&#x2F;19&#x2F;lets-talk-about-pake&#x2F;&quot;&gt;prove knowledge of a password without sending it in cleartext&lt;&#x2F;a&gt;, but we are talking about KDFs here!&lt;&#x2F;p&gt;
+&lt;p&gt;Anyways, the issue is that if you use a fast hash algorithm (like anything in the SHA family) to hash the passwords then store them, an attacker can perform many guesses very quickly to potentially recover the passwords. There&#x27;s some ways to make this a bit more difficult for attackers, such as using a &lt;a href=&quot;https:&#x2F;&#x2F;en.wikipedia.org&#x2F;wiki&#x2F;Salt_(cryptography)&quot;&gt;salt&lt;&#x2F;a&gt; or even a &lt;a href=&quot;https:&#x2F;&#x2F;en.wikipedia.org&#x2F;wiki&#x2F;Pepper_(cryptography)&quot;&gt;pepper&lt;&#x2F;a&gt;, but again we are talking about KDFs! There are KDFs specifically designed to be slow for this very purpose: to make brute force and dictionary attacks either impossible or very expensive. Some of these slow KDFs, like &lt;a href=&quot;https:&#x2F;&#x2F;en.wikipedia.org&#x2F;wiki&#x2F;Argon2&quot;&gt;Argon2&lt;&#x2F;a&gt;, are even &lt;a href=&quot;https:&#x2F;&#x2F;en.wikipedia.org&#x2F;wiki&#x2F;Memory-hard_function&quot;&gt;memory hard&lt;&#x2F;a&gt;, meaning they can only be optimized through speeding up memory access. This makes attacks against Argon2 more resistant to adversaries using specialized hardware like GPUs and ASICs, which are usually good at quickly hashing many possible password guesses but will be bottlenecked by the memory access requirement. As I mentioned earlier though, if you start with a low-entropy, easily-guessable password all of this protection will not do too much. These slow KDFs only slow things down - they don&#x27;t really make passwords magically stronger. For a real world example of using Argon2, check out the open-source password manager Bitwarden, which &lt;a href=&quot;https:&#x2F;&#x2F;bitwarden.com&#x2F;help&#x2F;kdf-algorithms&#x2F;#argon2id&quot;&gt;supports using Argon2&lt;&#x2F;a&gt;.&lt;&#x2F;p&gt;
+&lt;p&gt;Awesome, now we have looked at the differences between fast KDFs and purposefully slow ones and know when they should be used.&lt;&#x2F;p&gt;
+&lt;h1 id=&quot;summary&quot;&gt;Summary&lt;&#x2F;h1&gt;
+&lt;p&gt;To summarize:&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;KDFs can be used to derive suitable cryptographic keys from an unsuitable input (like a password).&lt;&#x2F;li&gt;
+&lt;li&gt;If the input is bad enough (low entropy), a KDF won&#x27;t help much here.&lt;&#x2F;li&gt;
+&lt;li&gt;Fast KDFs (like HKDF) are good when you want to derive a key from another key. Technically a hash function can be used here sometimes, but better to be safe and just use a KDF.&lt;&#x2F;li&gt;
+&lt;li&gt;Slow KDFs (like Argon2) are good when you want to store a password. These KDFs are purposefully slow to increase the cost of brute-force and dictionary attacks.&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;p&gt;Hope this was useful or at least interesting!&lt;&#x2F;p&gt;
+</content>
+        
+    </entry>
+    <entry xml:lang="en">
+        <title>Understanding Cryptographic Formats: ASN.1, DER, PEM, and more!</title>
+        <published>2024-08-13T00:00:00+00:00</published>
+        <updated>2024-08-13T00:00:00+00:00</updated>
+        
+        <author>
+          <name>
+            
+              Unknown
+            
+          </name>
+        </author>
+        
+        <link rel="alternate" type="text/html" href="https://bdillo.dev/blog/crypto-formats/"/>
+        <id>https://bdillo.dev/blog/crypto-formats/</id>
+        
+        <content type="html" xml:base="https://bdillo.dev/blog/crypto-formats/">&lt;p&gt;Recently I was messing with implementing my own certificate validation during a TLS handshake. In my application the
+certificates and their corresponding keypairs are generated on the fly, but before I got to that point I was just
+testing with static certificates and keys I manually generated with OpenSSL. When writing the code to read these
+and use them in my application I realized I didn&#x27;t really know much about the specifics of the encoding formats used
+for cryptographic keys, so I decided to dig in a bit.&lt;&#x2F;p&gt;
+&lt;h1 id=&quot;asn-1&quot;&gt;ASN.1&lt;&#x2F;h1&gt;
+&lt;p&gt;The first place to start is &lt;code&gt;ASN.1&lt;&#x2F;code&gt; (Abstract Syntax Notation One). &lt;code&gt;ASN.1&lt;&#x2F;code&gt; is just a language for defining data
+structures so they can be serialized and deserialized in a standard way. If you&#x27;ve used something like Protocol Buffers
+(aka &lt;code&gt;protobuf&lt;&#x2F;code&gt;), &lt;code&gt;ASN.1&lt;&#x2F;code&gt; is extremely similar in purpose. Here&#x27;s a simple example:&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;color:#c0c5ce;&quot;&gt;&lt;code&gt;&lt;span&gt;Person ::= SEQUENCE {
+&lt;&#x2F;span&gt;&lt;span&gt;    name UTF8String,
+&lt;&#x2F;span&gt;&lt;span&gt;    age INTEGER
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Here we have a simple &lt;code&gt;ASN.1&lt;&#x2F;code&gt; definition that defines a data structure called &lt;code&gt;Person&lt;&#x2F;code&gt; that has the fields &lt;code&gt;name&lt;&#x2F;code&gt; (of
+type &lt;code&gt;UTF8String&lt;&#x2F;code&gt;) and &lt;code&gt;age&lt;&#x2F;code&gt; (of type &lt;code&gt;INTEGER&lt;&#x2F;code&gt;). &lt;code&gt;SEQUENCE&lt;&#x2F;code&gt; is just an ordered list of elements, like a struct in C.
+Now here is an actual, albeit simple, &lt;code&gt;ASN.1&lt;&#x2F;code&gt; object as defined in &lt;a href=&quot;https:&#x2F;&#x2F;datatracker.ietf.org&#x2F;doc&#x2F;html&#x2F;rfc8017#autoid-43&quot;&gt;RFC 8017&lt;&#x2F;a&gt;,
+also known as &lt;code&gt;PKCS #1 v2.2&lt;&#x2F;code&gt;. We&#x27;ll talk about &lt;code&gt;PKCS#1&lt;&#x2F;code&gt; more in a bit.&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;color:#c0c5ce;&quot;&gt;&lt;code&gt;&lt;span&gt;RSAPublicKey ::= SEQUENCE {
+&lt;&#x2F;span&gt;&lt;span&gt;    modulus           INTEGER,  -- n
+&lt;&#x2F;span&gt;&lt;span&gt;    publicExponent    INTEGER   -- e
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;span&gt;
+&lt;&#x2F;span&gt;&lt;span&gt;The fields of type RSAPublicKey have the following meanings:
+&lt;&#x2F;span&gt;&lt;span&gt;	- modulus is the RSA modulus n.
+&lt;&#x2F;span&gt;&lt;span&gt;	- publicExponent is the RSA public exponent e.
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;This defines the data structure used to represent an RSA public key by the &lt;code&gt;PKCS#1&lt;&#x2F;code&gt; definition, and should be pretty
+straightforward compared to our last example. &lt;code&gt;RSAPublicKey&lt;&#x2F;code&gt; is a &lt;code&gt;SEQUENCE&lt;&#x2F;code&gt; (think struct) that contains two fields,
+both &lt;code&gt;INTEGER&lt;&#x2F;code&gt;s. Now we know how this structure is defined, but how is it actually encoded to be used in applications?&lt;&#x2F;p&gt;
+&lt;h1 id=&quot;der&quot;&gt;DER&lt;&#x2F;h1&gt;
+&lt;p&gt;&lt;code&gt;ASN.1&lt;&#x2F;code&gt; has many different encoding schemes that specify how a specific data structure is actually represented in bytes.
+For cryptography, we mostly only care about &lt;code&gt;DER&lt;&#x2F;code&gt; (Distinguished Encoding Rules) encoding. Some encoding formats of &lt;code&gt;ASN.1&lt;&#x2F;code&gt;
+are very flexible in how a specific object can be encoded into bytes, &lt;code&gt;DER&lt;&#x2F;code&gt; is not. &lt;code&gt;DER&lt;&#x2F;code&gt; provides only one way to encode
+an &lt;code&gt;ASN.1&lt;&#x2F;code&gt; value, which makes it ideal for use in cryptography where we don&#x27;t want any ambiguity. This is why &lt;code&gt;DER&lt;&#x2F;code&gt; encoding
+is extremely common for representing cryptographic entities like keys and certificates. &lt;code&gt;DER&lt;&#x2F;code&gt; is a
+&lt;a href=&quot;https:&#x2F;&#x2F;en.wikipedia.org&#x2F;wiki&#x2F;Type%E2%80%93length%E2%80%93value&quot;&gt;type-length-value&lt;&#x2F;a&gt; encoding. Because &lt;code&gt;DER&lt;&#x2F;code&gt; is a binary
+encoding, you probably won&#x27;t see it much when dealing with certificate and key files directly, this is where the more
+human-friendly &lt;code&gt;PEM&lt;&#x2F;code&gt; encoding comes in.&lt;&#x2F;p&gt;
+&lt;h1 id=&quot;pem&quot;&gt;PEM&lt;&#x2F;h1&gt;
+&lt;p&gt;If you have seen a file that has a header looking something like &lt;code&gt;-----BEGIN CERTIFICATE-----&lt;&#x2F;code&gt;, you have seen &lt;code&gt;PEM&lt;&#x2F;code&gt;.
+&lt;code&gt;PEM&lt;&#x2F;code&gt; is simply the base64 encoded &lt;code&gt;DER&lt;&#x2F;code&gt; bytes (&lt;a href=&quot;https:&#x2F;&#x2F;datatracker.ietf.org&#x2F;doc&#x2F;html&#x2F;rfc7468#appendix-B&quot;&gt;although not always&lt;&#x2F;a&gt;)
+with human readable headers and footers that give a hint as to what that data actually represents. &lt;code&gt;PEM&lt;&#x2F;code&gt; stands for
+&quot;Privacy-Enhanced Mail&quot;, this encoding was originally part of some standards that were never widely adopted in the email
+space, but is now very commonly used to encode cryptographic materials.&lt;&#x2F;p&gt;
+&lt;p&gt;Great, now we know that &lt;code&gt;ASN.1&lt;&#x2F;code&gt; is a language for defining how data structures are defined so they can be used in systems,
+&lt;code&gt;DER&lt;&#x2F;code&gt; is the most commonly used encoding of that format in cryptography, and &lt;code&gt;PEM&lt;&#x2F;code&gt; is how the &lt;code&gt;DER&lt;&#x2F;code&gt; bytes are textually
+encoded so humans don&#x27;t have to deal with a binary format. Let&#x27;s go back to &lt;code&gt;ASN.1&lt;&#x2F;code&gt; formats as there are several
+commonly used in cryptography. We will be looking at the &lt;code&gt;DER&lt;&#x2F;code&gt; and &lt;code&gt;PEM&lt;&#x2F;code&gt; encodings of these structures and viewing
+their decoding with the excellent &lt;a href=&quot;https:&#x2F;&#x2F;lapo.it&#x2F;asn1js&quot;&gt;ASN.1 JavaScript Decoder&lt;&#x2F;a&gt;.&lt;&#x2F;p&gt;
+&lt;h1 id=&quot;pkcs-1&quot;&gt;PKCS#1&lt;&#x2F;h1&gt;
+&lt;p&gt;&lt;code&gt;PKCS#1&lt;&#x2F;code&gt; is a key format that is specific to RSA only. When looking at a public or private key that begins with
+&lt;code&gt;-----BEGIN RSA PRIVATE KEY-----&lt;&#x2F;code&gt; or &lt;code&gt;-----BEGIN RSA PUBLIC KEY-----&lt;&#x2F;code&gt; you are working with a &lt;code&gt;PKCS1&lt;&#x2F;code&gt; formatted key. The
+&lt;code&gt;ASN.1&lt;&#x2F;code&gt; formats can be found in &lt;a href=&quot;https:&#x2F;&#x2F;datatracker.ietf.org&#x2F;doc&#x2F;html&#x2F;rfc8017#appendix-A&quot;&gt;RFC8017&lt;&#x2F;a&gt;, as we mentioned
+before. OpenSSL calls this the &quot;traditional&quot; format. Here&#x27;s an example of generating one in this format using OpenSSL 3.3:&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;color:#c0c5ce;&quot;&gt;&lt;code&gt;&lt;span&gt;~ % &amp;gt; openssl genrsa -traditional
+&lt;&#x2F;span&gt;&lt;span&gt;-----BEGIN RSA PRIVATE KEY-----
+&lt;&#x2F;span&gt;&lt;span&gt;MIIEpAIBAAKCAQEAjmkFvWuYRq87fDGbEyX+ePzE97eIYx+BuciKzXe9eSM7oL0P
+&lt;&#x2F;span&gt;&lt;span&gt;I3vlDtXXiS2B5FOOmb97IMSqJ6mgjoS2CxEbD&#x2F;SagNkjhMq3fyoiHU2kXSuw0Is9
+&lt;&#x2F;span&gt;&lt;span&gt;...
+&lt;&#x2F;span&gt;&lt;span&gt;2S3cTMnr&#x2F;Mr3hAkgBvJMxanrIdyCsE42oM1y9Qwb0Xdybwq5i&#x2F;ehyPqv+xSYzXO+
+&lt;&#x2F;span&gt;&lt;span&gt;A+ZQg1Ng2CmUS7LaErp0gFGTnwsn2YmD92vMo79RIlj9c0FM43rW6Q==
+&lt;&#x2F;span&gt;&lt;span&gt;-----END RSA PRIVATE KEY-----
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;And decoded it looks like:&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;color:#c0c5ce;&quot;&gt;&lt;code&gt;&lt;span&gt;RSAPrivateKey SEQUENCE (9 elem)
+&lt;&#x2F;span&gt;&lt;span&gt;	- version Version INTEGER 0
+&lt;&#x2F;span&gt;&lt;span&gt;	- modulus INTEGER (2048 bit) 1797762779...
+&lt;&#x2F;span&gt;&lt;span&gt;	- publicExponent INTEGER 65537
+&lt;&#x2F;span&gt;&lt;span&gt;	- privateExponent INTEGER (2044 bit) 1022340367...
+&lt;&#x2F;span&gt;&lt;span&gt;	- prime1 INTEGER (1024 bit) 1401182203...
+&lt;&#x2F;span&gt;&lt;span&gt;	- prime2 INTEGER (1024 bit) 1283032837...
+&lt;&#x2F;span&gt;&lt;span&gt;	- exponent1 INTEGER (1024 bit) 9533135981...
+&lt;&#x2F;span&gt;&lt;span&gt;	- exponent2 INTEGER (1020 bit) 9937401292...
+&lt;&#x2F;span&gt;&lt;span&gt;	- coefficient INTEGER (1024 bit) 1108249090...
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Which matches the definition in the RFC:&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;color:#c0c5ce;&quot;&gt;&lt;code&gt;&lt;span&gt;RSAPrivateKey ::= SEQUENCE {
+&lt;&#x2F;span&gt;&lt;span&gt;    version           Version,
+&lt;&#x2F;span&gt;&lt;span&gt;    modulus           INTEGER,  -- n
+&lt;&#x2F;span&gt;&lt;span&gt;    publicExponent    INTEGER,  -- e
+&lt;&#x2F;span&gt;&lt;span&gt;    privateExponent   INTEGER,  -- d
+&lt;&#x2F;span&gt;&lt;span&gt;    prime1            INTEGER,  -- p
+&lt;&#x2F;span&gt;&lt;span&gt;    prime2            INTEGER,  -- q
+&lt;&#x2F;span&gt;&lt;span&gt;    exponent1         INTEGER,  -- d mod (p-1)
+&lt;&#x2F;span&gt;&lt;span&gt;    exponent2         INTEGER,  -- d mod (q-1)
+&lt;&#x2F;span&gt;&lt;span&gt;    coefficient       INTEGER,  -- (inverse of q) mod p
+&lt;&#x2F;span&gt;&lt;span&gt;    otherPrimeInfos   OtherPrimeInfos OPTIONAL
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;If we don&#x27;t specify we want the &quot;traditional&quot; format, &lt;code&gt;PKCS#8&lt;&#x2F;code&gt; is used.&lt;&#x2F;p&gt;
+&lt;h1 id=&quot;pkcs-8&quot;&gt;PKCS#8&lt;&#x2F;h1&gt;
+&lt;p&gt;&lt;code&gt;PKCS#8&lt;&#x2F;code&gt; is a more generalizable standard for storing private keys in that is isn&#x27;t restricted only to RSA, which is why
+it is preferred in more modern applications. The details and &lt;code&gt;ASN.1&lt;&#x2F;code&gt; structures can be found in
+&lt;a href=&quot;https:&#x2F;&#x2F;datatracker.ietf.org&#x2F;doc&#x2F;html&#x2F;rfc5208&quot;&gt;RFC5208&lt;&#x2F;a&gt; and &lt;a href=&quot;https:&#x2F;&#x2F;datatracker.ietf.org&#x2F;doc&#x2F;html&#x2F;rfc5958&quot;&gt;RFC5958&lt;&#x2F;a&gt;.
+This is the default format when using OpenSSL and not specifying the &quot;traditional&quot; format. If you see the headers
+&lt;code&gt;-----BEGIN PRIVATE KEY-----&lt;&#x2F;code&gt; or &lt;code&gt;----- BEGIN PUBLIC KEY -----&lt;&#x2F;code&gt;, you are dealing with &lt;code&gt;PKCS#8&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;color:#c0c5ce;&quot;&gt;&lt;code&gt;&lt;span&gt;~ % &amp;gt; openssl genpkey -algorithm ed25519
+&lt;&#x2F;span&gt;&lt;span&gt;-----BEGIN PRIVATE KEY-----
+&lt;&#x2F;span&gt;&lt;span&gt;MC4CAQAwBQYDK2VwBCIEICeijmCNKBgrpWFsec4l8vsUKb8rysrUM9Y8TqX+YeCu
+&lt;&#x2F;span&gt;&lt;span&gt;-----END PRIVATE KEY-----
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;pre style=&quot;background-color:#2b303b;color:#c0c5ce;&quot;&gt;&lt;code&gt;&lt;span&gt;PrivateKeyInfo SEQUENCE (3 elem)
+&lt;&#x2F;span&gt;&lt;span&gt;	- version Version INTEGER 0
+&lt;&#x2F;span&gt;&lt;span&gt;	- privateKeyAlgorithm AlgorithmIdentifier SEQUENCE (1 elem)
+&lt;&#x2F;span&gt;&lt;span&gt;	    - algorithm OBJECT IDENTIFIER 1.3.101.112 curveEd25519 (EdDSA 25519 signature algorithm)
+&lt;&#x2F;span&gt;&lt;span&gt;	- privateKey PrivateKey OCTET STRING (34 byte) 042027A28E...
+&lt;&#x2F;span&gt;&lt;span&gt;	    Offset: 12  
+&lt;&#x2F;span&gt;&lt;span&gt;	    Length: 2+34  
+&lt;&#x2F;span&gt;&lt;span&gt;	    (encapsulates)  
+&lt;&#x2F;span&gt;&lt;span&gt;	    Value:  
+&lt;&#x2F;span&gt;&lt;span&gt;	    **(34 byte)  
+&lt;&#x2F;span&gt;&lt;span&gt;	    042027A28E...**
+&lt;&#x2F;span&gt;&lt;span&gt;	    - OCTET STRING (32 byte) 27A28E608D...
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;The &lt;code&gt;PKCS#8&lt;&#x2F;code&gt; standard also defines optional password encryption for your private key. If you see
+&lt;code&gt;----- BEGIN ENCRYPTED PRIVATE KEY -----&lt;&#x2F;code&gt;, that indicates an encrypted &lt;code&gt;PKCS#8&lt;&#x2F;code&gt; key.&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;color:#c0c5ce;&quot;&gt;&lt;code&gt;&lt;span&gt;~ % &amp;gt; openssl genpkey -algorithm ed25519 -aes256
+&lt;&#x2F;span&gt;&lt;span&gt;Enter PEM pass phrase:
+&lt;&#x2F;span&gt;&lt;span&gt;Verifying - Enter PEM pass phrase:
+&lt;&#x2F;span&gt;&lt;span&gt;-----BEGIN ENCRYPTED PRIVATE KEY-----
+&lt;&#x2F;span&gt;&lt;span&gt;MIGjMF8GCSqGSIb3DQEFDTBSMDEGCSqGSIb3DQEFDDAkBBBNksGAfow4w6Kje5QV
+&lt;&#x2F;span&gt;&lt;span&gt;g86&#x2F;AgIIADAMBggqhkiG9w0CCQUAMB0GCWCGSAFlAwQBKgQQETJoNfit1sdfCm9H
+&lt;&#x2F;span&gt;&lt;span&gt;Pzc4GQRAQgojnmSIsUyWSzlVLZB479&#x2F;MNspEOobFionW64vkh6lqBdPFBq4fpnXe
+&lt;&#x2F;span&gt;&lt;span&gt;fnuR7DlVG2Y+7NamDKjyBPdIJxhxAg==
+&lt;&#x2F;span&gt;&lt;span&gt;-----END ENCRYPTED PRIVATE KEY-----
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;The encoded &lt;code&gt;DER&lt;&#x2F;code&gt; value contains information on how to decrypt the contained encrypted key. You can see that the size of
+the &lt;code&gt;PEM&lt;&#x2F;code&gt;-encoded encrypted key is actually larger than its plaintext counterpart due to this extra information:&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;color:#c0c5ce;&quot;&gt;&lt;code&gt;&lt;span&gt;~ % &amp;gt; openssl genpkey -algorithm ed25519 | wc -c
+&lt;&#x2F;span&gt;&lt;span&gt;     119
+&lt;&#x2F;span&gt;&lt;span&gt;~ % &amp;gt; openssl genpkey -algorithm ed25519 -aes256 | wc -c
+&lt;&#x2F;span&gt;&lt;span&gt;Enter PEM pass phrase:
+&lt;&#x2F;span&gt;&lt;span&gt;Verifying - Enter PEM pass phrase:
+&lt;&#x2F;span&gt;&lt;span&gt;     302
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;h1 id=&quot;sec1&quot;&gt;SEC1&lt;&#x2F;h1&gt;
+&lt;p&gt;&lt;code&gt;SEC1&lt;&#x2F;code&gt; formatted keys are specifically for elliptic curve cryptography. The &lt;code&gt;ASN.1&lt;&#x2F;code&gt; specifications can be found
+&lt;a href=&quot;https:&#x2F;&#x2F;www.secg.org&#x2F;sec1-v2.pdf&quot;&gt;here&lt;&#x2F;a&gt; and in &lt;a href=&quot;https:&#x2F;&#x2F;datatracker.ietf.org&#x2F;doc&#x2F;html&#x2F;rfc5915&quot;&gt;RFC5915&lt;&#x2F;a&gt;. The
+header &lt;code&gt;-----BEGIN EC PRIVATE KEY-----&lt;&#x2F;code&gt; usually indicates that the key is in the &lt;code&gt;SEC1&lt;&#x2F;code&gt; format.&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;color:#c0c5ce;&quot;&gt;&lt;code&gt;&lt;span&gt;~ % &amp;gt; openssl ecparam -name prime256v1 -genkey -noout
+&lt;&#x2F;span&gt;&lt;span&gt;-----BEGIN EC PRIVATE KEY-----
+&lt;&#x2F;span&gt;&lt;span&gt;MHcCAQEEIM&#x2F;Te&#x2F;oqzVkBxVBdGYCp0kIsUO4ryvU9HNo2KVNODh6XoAoGCCqGSM49
+&lt;&#x2F;span&gt;&lt;span&gt;AwEHoUQDQgAEkbxfrK8&#x2F;qJic3VHVxgh3xmOhCGW&#x2F;OxERLbC0utixI2q3lvQmNDS1
+&lt;&#x2F;span&gt;&lt;span&gt;EOA9qTKFsxtMPGoYsgss21E0pzBfOZTomw==
+&lt;&#x2F;span&gt;&lt;span&gt;-----END EC PRIVATE KEY-----
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Funny enough, using the ASN.1 JavaScript Decoder seems to ambiguously parse this as a &lt;code&gt;PKIMessage&lt;&#x2F;code&gt; object defined in
+&lt;a href=&quot;https:&#x2F;&#x2F;datatracker.ietf.org&#x2F;doc&#x2F;html&#x2F;rfc4210#section-5.1&quot;&gt;RFC4210 Section 5.1&lt;&#x2F;a&gt;:&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;color:#c0c5ce;&quot;&gt;&lt;code&gt;&lt;span&gt;PKIMessage SEQUENCE (4 elem)
+&lt;&#x2F;span&gt;&lt;span&gt;	- header PKIHeader [?] INTEGER 1
+&lt;&#x2F;span&gt;&lt;span&gt;	- body PKIBody [?] OCTET STRING (32 byte) CFD37BFA2A...
+&lt;&#x2F;span&gt;&lt;span&gt;	- protection [0] (1 elem)
+&lt;&#x2F;span&gt;&lt;span&gt;	    - PKIProtection [?] OBJECT IDENTIFIER 1.2.840.10045.3.1.7 prime256v1 (ANSI X9.62 named elliptic curve)
+&lt;&#x2F;span&gt;&lt;span&gt;	- extraCerts [1] (1 elem)
+&lt;&#x2F;span&gt;&lt;span&gt;	    - SEQUENCE [?] BIT STRING (520 bit) 0000010010...
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;But in our case, this is incorrect as we should have an &lt;code&gt;ECPrivateKey&lt;&#x2F;code&gt; object as defined in the previously linked RFC5915.
+This &lt;code&gt;ASN.1&lt;&#x2F;code&gt; definition looks like:&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;color:#c0c5ce;&quot;&gt;&lt;code&gt;&lt;span&gt;ECPrivateKey ::= SEQUENCE {
+&lt;&#x2F;span&gt;&lt;span&gt;     version        INTEGER { ecPrivkeyVer1(1) } (ecPrivkeyVer1),
+&lt;&#x2F;span&gt;&lt;span&gt;     privateKey     OCTET STRING,
+&lt;&#x2F;span&gt;&lt;span&gt;     parameters [0] ECParameters {{ NamedCurve }} OPTIONAL,
+&lt;&#x2F;span&gt;&lt;span&gt;     publicKey  [1] BIT STRING OPTIONAL
+&lt;&#x2F;span&gt;&lt;span&gt;}
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Which does, in fact, match our generated private key if we use a more primitive &lt;code&gt;ASN.1&lt;&#x2F;code&gt; parsing tool:&lt;&#x2F;p&gt;
+&lt;pre style=&quot;background-color:#2b303b;color:#c0c5ce;&quot;&gt;&lt;code&gt;&lt;span&gt;~ % &amp;gt; openssl ecparam -name prime256v1 -genkey -noout | openssl asn1parse
+&lt;&#x2F;span&gt;&lt;span&gt;    0:d=0  hl=2 l= 119 cons: SEQUENCE
+&lt;&#x2F;span&gt;&lt;span&gt;    2:d=1  hl=2 l=   1 prim: INTEGER           :01
+&lt;&#x2F;span&gt;&lt;span&gt;    5:d=1  hl=2 l=  32 prim: OCTET STRING      [HEX DUMP]:18A01421F9...
+&lt;&#x2F;span&gt;&lt;span&gt;   39:d=1  hl=2 l=  10 cons: cont [ 0 ]
+&lt;&#x2F;span&gt;&lt;span&gt;   41:d=2  hl=2 l=   8 prim: OBJECT            :prime256v1
+&lt;&#x2F;span&gt;&lt;span&gt;   51:d=1  hl=2 l=  68 cons: cont [ 1 ]
+&lt;&#x2F;span&gt;&lt;span&gt;   53:d=2  hl=2 l=  66 prim: BIT STRING
+&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;We see we have a &lt;code&gt;SEQUENCE&lt;&#x2F;code&gt; that contains an &lt;code&gt;INTEGER&lt;&#x2F;code&gt; (matching &lt;code&gt;version&lt;&#x2F;code&gt;), an &lt;code&gt;OCTET STRING&lt;&#x2F;code&gt; (matching &lt;code&gt;privateKey&lt;&#x2F;code&gt;),
+then the name of our curve (&lt;code&gt;prime256v1&lt;&#x2F;code&gt;) and an optional &lt;code&gt;publicKey&lt;&#x2F;code&gt;, which we do not have.&lt;&#x2F;p&gt;
+&lt;h1 id=&quot;summary&quot;&gt;Summary&lt;&#x2F;h1&gt;
+&lt;p&gt;To summarize everything:&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;ASN.1&lt;&#x2F;code&gt; is a language to define arbitrary data structures.&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;code&gt;DER&lt;&#x2F;code&gt; is way to encode &lt;code&gt;ASN.1&lt;&#x2F;code&gt; structures into bytes in a non-ambiguous way.&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;code&gt;PEM&lt;&#x2F;code&gt; is a way to encode bytes into a more human-friendly format that gives the user a hint as to what the data
+actually is (e.g. a private key, certificate, etc)&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;code&gt;PKCS#1&lt;&#x2F;code&gt; is an encoding for RSA keys. If you see &lt;code&gt;-----BEGIN RSA PRIVATE KEY-----&lt;&#x2F;code&gt;, this is probably a &lt;code&gt;PKCS#1&lt;&#x2F;code&gt; &lt;code&gt;DER&lt;&#x2F;code&gt;
+and &lt;code&gt;PEM&lt;&#x2F;code&gt; encoded file.&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;code&gt;PKCS#8&lt;&#x2F;code&gt; is a more generalizable encoding format for keys that supports many different types of keys. It also
+supports encrypting the &lt;code&gt;PEM&lt;&#x2F;code&gt; contents with a password. If you see &lt;code&gt;-----BEGIN PRIVATE KEY-----&lt;&#x2F;code&gt; or &lt;code&gt;-----BEGIN ENCRYPTED PRIVATE KEY-----&lt;&#x2F;code&gt;, this is probably a &lt;code&gt;PKCS#8&lt;&#x2F;code&gt; &lt;code&gt;DER&lt;&#x2F;code&gt; and &lt;code&gt;PEM&lt;&#x2F;code&gt; encoded key.&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;code&gt;SEC1&lt;&#x2F;code&gt; is a key format specifically for elliptic curve keys. If you see &lt;code&gt;-----BEGIN EC PRIVATE KEY-----&lt;&#x2F;code&gt;, this is
+probably a &lt;code&gt;SEC1&lt;&#x2F;code&gt; &lt;code&gt;DER&lt;&#x2F;code&gt; and &lt;code&gt;PEM&lt;&#x2F;code&gt; encoded file.&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;p&gt;Hope this helps to make some of these formats a bit more clear!&lt;&#x2F;p&gt;
+</content>
+        
+    </entry>
+</feed>

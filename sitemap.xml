@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+    <url>
+        <loc>https://bdillo.dev/</loc>
+    </url>
+    <url>
+        <loc>https://bdillo.dev/blog/</loc>
+    </url>
+    <url>
+        <loc>https://bdillo.dev/blog/crypto-formats/</loc>
+        <lastmod>2024-08-13</lastmod>
+    </url>
+    <url>
+        <loc>https://bdillo.dev/blog/kdfs-fast-and-slow/</loc>
+        <lastmod>2024-09-02</lastmod>
+    </url>
+    <url>
+        <loc>https://bdillo.dev/blog/tun-tap-bridges/</loc>
+        <lastmod>2024-09-17</lastmod>
+    </url>
+    <url>
+        <loc>https://bdillo.dev/contact/</loc>
+    </url>
+</urlset>

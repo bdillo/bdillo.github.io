@@ -1,0 +1,104 @@
+:root {
+  --bg_color: #17141f;
+  --txt_color: #f1f0f5;
+  --accent_color: #ffcc00;
+}
+
+@font-face {
+  font-family: 'source-code-pro';
+  src: url('/fonts/SourceCodePro-VariableFont_wght.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+}
+
+html {
+  background-color: var(--bg_color);
+  color: var(--txt_color);
+  margin: 40px auto;
+  padding: 1.5em;
+	font-size: 16px;
+	line-height: 1.5em;
+	font-family: 'source-code-pro', Monospace;
+  word-wrap: break-word;
+  max-width: 1000px;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  line-height: 1.2;
+  color: var(--accent_color);
+}
+
+a {
+  font-weight: bold;
+  color: inherit;
+  border-bottom: 1px solid var(--txt_color);
+  text-decoration: none;
+}
+
+a:hover {
+  border-bottom: 1px solid var(--accent_color);
+}
+
+p {
+  letter-spacing: 0.5px;
+  margin-bottom: 16px;
+}
+
+hr {
+  border: none;
+  height: 2px;
+  background-color: var(--accent_color);
+  margin: 20px 0;
+}
+
+/* for code blocks */
+pre {
+  padding: 1rem;
+  overflow: auto;
+}
+/* The line numbers already provide some kind of left/right padding */
+pre[data-linenos] {
+  padding: 1rem 0;
+}
+pre table td {
+  padding: 0;
+}
+/* The line number cells */
+pre table td:nth-of-type(1) {
+  text-align: center;
+  user-select: none;
+}
+pre mark {
+  /* If you want your highlights to take the full width */
+  display: block;
+}
+pre table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+/* classes */
+.nav_bar {
+  font-size: 24px;
+  text-align: left;
+  margin-bottom: 32px;
+}
+
+.nav_list {
+  list-style: none;
+  display: flex;
+  padding: 0;
+}
+
+.nav_item {
+  margin: 0 20px 0 0;
+}
+
+.nav_prefix {
+  color: var(--accent_color);
+}

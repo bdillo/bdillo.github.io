@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <title>bdillo</title>
+  <link rel="stylesheet" type=text/css href="https://bdillo.dev/css/style.css">
+  <meta name=viewport content="width=device-width,initial-scale=1">
+</head>
+
+<body>
+  <nav class="nav_bar">
+    <ul class="nav_list">
+      <li class="nav_item nav_prefix">bdillo ~ % ></li>
+      <li class="nav_item"><a href="https://bdillo.dev">home</a></li>
+      <li class="nav_item"><a href="https://bdillo.dev/blog/">blog</a></li>
+      <li class="nav_item"><a href="https://bdillo.dev/atom.xml">feed</a></li>
+      <li class="nav_item"><a href="https://bdillo.dev/contact">contact</a></li>
+    </ul>
+  </nav>
+  <hr>
+  <section class="section">
+    <div class="container">
+      
+<h1 class="title">
+  Understanding Cryptographic Formats: ASN.1, DER, PEM, and more!
+</h1>
+<p class="subtitle"><strong>2024-08-13</strong></p>
+<p>Recently I was messing with implementing my own certificate validation during a TLS handshake. In my application the
+certificates and their corresponding keypairs are generated on the fly, but before I got to that point I was just
+testing with static certificates and keys I manually generated with OpenSSL. When writing the code to read these
+and use them in my application I realized I didn't really know much about the specifics of the encoding formats used
+for cryptographic keys, so I decided to dig in a bit.</p>
+<h1 id="asn-1">ASN.1</h1>
+<p>The first place to start is <code>ASN.1</code> (Abstract Syntax Notation One). <code>ASN.1</code> is just a language for defining data
+structures so they can be serialized and deserialized in a standard way. If you've used something like Protocol Buffers
+(aka <code>protobuf</code>), <code>ASN.1</code> is extremely similar in purpose. Here's a simple example:</p>
+<pre style="background-color:#2b303b;color:#c0c5ce;"><code><span>Person ::= SEQUENCE {
+</span><span>    name UTF8String,
+</span><span>    age INTEGER
+</span><span>}
+</span></code></pre>
+<p>Here we have a simple <code>ASN.1</code> definition that defines a data structure called <code>Person</code> that has the fields <code>name</code> (of
+type <code>UTF8String</code>) and <code>age</code> (of type <code>INTEGER</code>). <code>SEQUENCE</code> is just an ordered list of elements, like a struct in C.
+Now here is an actual, albeit simple, <code>ASN.1</code> object as defined in <a href="https://datatracker.ietf.org/doc/html/rfc8017#autoid-43">RFC 8017</a>,
+also known as <code>PKCS #1 v2.2</code>. We'll talk about <code>PKCS#1</code> more in a bit.</p>
+<pre style="background-color:#2b303b;color:#c0c5ce;"><code><span>RSAPublicKey ::= SEQUENCE {
+</span><span>    modulus           INTEGER,  -- n
+</span><span>    publicExponent    INTEGER   -- e
+</span><span>}
+</span><span>
+</span><span>The fields of type RSAPublicKey have the following meanings:
+</span><span>	- modulus is the RSA modulus n.
+</span><span>	- publicExponent is the RSA public exponent e.
+</span></code></pre>
+<p>This defines the data structure used to represent an RSA public key by the <code>PKCS#1</code> definition, and should be pretty
+straightforward compared to our last example. <code>RSAPublicKey</code> is a <code>SEQUENCE</code> (think struct) that contains two fields,
+both <code>INTEGER</code>s. Now we know how this structure is defined, but how is it actually encoded to be used in applications?</p>
+<h1 id="der">DER</h1>
+<p><code>ASN.1</code> has many different encoding schemes that specify how a specific data structure is actually represented in bytes.
+For cryptography, we mostly only care about <code>DER</code> (Distinguished Encoding Rules) encoding. Some encoding formats of <code>ASN.1</code>
+are very flexible in how a specific object can be encoded into bytes, <code>DER</code> is not. <code>DER</code> provides only one way to encode
+an <code>ASN.1</code> value, which makes it ideal for use in cryptography where we don't want any ambiguity. This is why <code>DER</code> encoding
+is extremely common for representing cryptographic entities like keys and certificates. <code>DER</code> is a
+<a href="https://en.wikipedia.org/wiki/Type%E2%80%93length%E2%80%93value">type-length-value</a> encoding. Because <code>DER</code> is a binary
+encoding, you probably won't see it much when dealing with certificate and key files directly, this is where the more
+human-friendly <code>PEM</code> encoding comes in.</p>
+<h1 id="pem">PEM</h1>
+<p>If you have seen a file that has a header looking something like <code>-----BEGIN CERTIFICATE-----</code>, you have seen <code>PEM</code>.
+<code>PEM</code> is simply the base64 encoded <code>DER</code> bytes (<a href="https://datatracker.ietf.org/doc/html/rfc7468#appendix-B">although not always</a>)
+with human readable headers and footers that give a hint as to what that data actually represents. <code>PEM</code> stands for
+"Privacy-Enhanced Mail", this encoding was originally part of some standards that were never widely adopted in the email
+space, but is now very commonly used to encode cryptographic materials.</p>
+<p>Great, now we know that <code>ASN.1</code> is a language for defining how data structures are defined so they can be used in systems,
+<code>DER</code> is the most commonly used encoding of that format in cryptography, and <code>PEM</code> is how the <code>DER</code> bytes are textually
+encoded so humans don't have to deal with a binary format. Let's go back to <code>ASN.1</code> formats as there are several
+commonly used in cryptography. We will be looking at the <code>DER</code> and <code>PEM</code> encodings of these structures and viewing
+their decoding with the excellent <a href="https://lapo.it/asn1js">ASN.1 JavaScript Decoder</a>.</p>
+<h1 id="pkcs-1">PKCS#1</h1>
+<p><code>PKCS#1</code> is a key format that is specific to RSA only. When looking at a public or private key that begins with
+<code>-----BEGIN RSA PRIVATE KEY-----</code> or <code>-----BEGIN RSA PUBLIC KEY-----</code> you are working with a <code>PKCS1</code> formatted key. The
+<code>ASN.1</code> formats can be found in <a href="https://datatracker.ietf.org/doc/html/rfc8017#appendix-A">RFC8017</a>, as we mentioned
+before. OpenSSL calls this the "traditional" format. Here's an example of generating one in this format using OpenSSL 3.3:</p>
+<pre style="background-color:#2b303b;color:#c0c5ce;"><code><span>~ % &gt; openssl genrsa -traditional
+</span><span>-----BEGIN RSA PRIVATE KEY-----
+</span><span>MIIEpAIBAAKCAQEAjmkFvWuYRq87fDGbEyX+ePzE97eIYx+BuciKzXe9eSM7oL0P
+</span><span>I3vlDtXXiS2B5FOOmb97IMSqJ6mgjoS2CxEbD/SagNkjhMq3fyoiHU2kXSuw0Is9
+</span><span>...
+</span><span>2S3cTMnr/Mr3hAkgBvJMxanrIdyCsE42oM1y9Qwb0Xdybwq5i/ehyPqv+xSYzXO+
+</span><span>A+ZQg1Ng2CmUS7LaErp0gFGTnwsn2YmD92vMo79RIlj9c0FM43rW6Q==
+</span><span>-----END RSA PRIVATE KEY-----
+</span></code></pre>
+<p>And decoded it looks like:</p>
+<pre style="background-color:#2b303b;color:#c0c5ce;"><code><span>RSAPrivateKey SEQUENCE (9 elem)
+</span><span>	- version Version INTEGER 0
+</span><span>	- modulus INTEGER (2048 bit) 1797762779...
+</span><span>	- publicExponent INTEGER 65537
+</span><span>	- privateExponent INTEGER (2044 bit) 1022340367...
+</span><span>	- prime1 INTEGER (1024 bit) 1401182203...
+</span><span>	- prime2 INTEGER (1024 bit) 1283032837...
+</span><span>	- exponent1 INTEGER (1024 bit) 9533135981...
+</span><span>	- exponent2 INTEGER (1020 bit) 9937401292...
+</span><span>	- coefficient INTEGER (1024 bit) 1108249090...
+</span></code></pre>
+<p>Which matches the definition in the RFC:</p>
+<pre style="background-color:#2b303b;color:#c0c5ce;"><code><span>RSAPrivateKey ::= SEQUENCE {
+</span><span>    version           Version,
+</span><span>    modulus           INTEGER,  -- n
+</span><span>    publicExponent    INTEGER,  -- e
+</span><span>    privateExponent   INTEGER,  -- d
+</span><span>    prime1            INTEGER,  -- p
+</span><span>    prime2            INTEGER,  -- q
+</span><span>    exponent1         INTEGER,  -- d mod (p-1)
+</span><span>    exponent2         INTEGER,  -- d mod (q-1)
+</span><span>    coefficient       INTEGER,  -- (inverse of q) mod p
+</span><span>    otherPrimeInfos   OtherPrimeInfos OPTIONAL
+</span><span>}
+</span></code></pre>
+<p>If we don't specify we want the "traditional" format, <code>PKCS#8</code> is used.</p>
+<h1 id="pkcs-8">PKCS#8</h1>
+<p><code>PKCS#8</code> is a more generalizable standard for storing private keys in that is isn't restricted only to RSA, which is why
+it is preferred in more modern applications. The details and <code>ASN.1</code> structures can be found in
+<a href="https://datatracker.ietf.org/doc/html/rfc5208">RFC5208</a> and <a href="https://datatracker.ietf.org/doc/html/rfc5958">RFC5958</a>.
+This is the default format when using OpenSSL and not specifying the "traditional" format. If you see the headers
+<code>-----BEGIN PRIVATE KEY-----</code> or <code>----- BEGIN PUBLIC KEY -----</code>, you are dealing with <code>PKCS#8</code>.</p>
+<pre style="background-color:#2b303b;color:#c0c5ce;"><code><span>~ % &gt; openssl genpkey -algorithm ed25519
+</span><span>-----BEGIN PRIVATE KEY-----
+</span><span>MC4CAQAwBQYDK2VwBCIEICeijmCNKBgrpWFsec4l8vsUKb8rysrUM9Y8TqX+YeCu
+</span><span>-----END PRIVATE KEY-----
+</span></code></pre>
+<pre style="background-color:#2b303b;color:#c0c5ce;"><code><span>PrivateKeyInfo SEQUENCE (3 elem)
+</span><span>	- version Version INTEGER 0
+</span><span>	- privateKeyAlgorithm AlgorithmIdentifier SEQUENCE (1 elem)
+</span><span>	    - algorithm OBJECT IDENTIFIER 1.3.101.112 curveEd25519 (EdDSA 25519 signature algorithm)
+</span><span>	- privateKey PrivateKey OCTET STRING (34 byte) 042027A28E...
+</span><span>	    Offset: 12  
+</span><span>	    Length: 2+34  
+</span><span>	    (encapsulates)  
+</span><span>	    Value:  
+</span><span>	    **(34 byte)  
+</span><span>	    042027A28E...**
+</span><span>	    - OCTET STRING (32 byte) 27A28E608D...
+</span></code></pre>
+<p>The <code>PKCS#8</code> standard also defines optional password encryption for your private key. If you see
+<code>----- BEGIN ENCRYPTED PRIVATE KEY -----</code>, that indicates an encrypted <code>PKCS#8</code> key.</p>
+<pre style="background-color:#2b303b;color:#c0c5ce;"><code><span>~ % &gt; openssl genpkey -algorithm ed25519 -aes256
+</span><span>Enter PEM pass phrase:
+</span><span>Verifying - Enter PEM pass phrase:
+</span><span>-----BEGIN ENCRYPTED PRIVATE KEY-----
+</span><span>MIGjMF8GCSqGSIb3DQEFDTBSMDEGCSqGSIb3DQEFDDAkBBBNksGAfow4w6Kje5QV
+</span><span>g86/AgIIADAMBggqhkiG9w0CCQUAMB0GCWCGSAFlAwQBKgQQETJoNfit1sdfCm9H
+</span><span>Pzc4GQRAQgojnmSIsUyWSzlVLZB479/MNspEOobFionW64vkh6lqBdPFBq4fpnXe
+</span><span>fnuR7DlVG2Y+7NamDKjyBPdIJxhxAg==
+</span><span>-----END ENCRYPTED PRIVATE KEY-----
+</span></code></pre>
+<p>The encoded <code>DER</code> value contains information on how to decrypt the contained encrypted key. You can see that the size of
+the <code>PEM</code>-encoded encrypted key is actually larger than its plaintext counterpart due to this extra information:</p>
+<pre style="background-color:#2b303b;color:#c0c5ce;"><code><span>~ % &gt; openssl genpkey -algorithm ed25519 | wc -c
+</span><span>     119
+</span><span>~ % &gt; openssl genpkey -algorithm ed25519 -aes256 | wc -c
+</span><span>Enter PEM pass phrase:
+</span><span>Verifying - Enter PEM pass phrase:
+</span><span>     302
+</span></code></pre>
+<h1 id="sec1">SEC1</h1>
+<p><code>SEC1</code> formatted keys are specifically for elliptic curve cryptography. The <code>ASN.1</code> specifications can be found
+<a href="https://www.secg.org/sec1-v2.pdf">here</a> and in <a href="https://datatracker.ietf.org/doc/html/rfc5915">RFC5915</a>. The
+header <code>-----BEGIN EC PRIVATE KEY-----</code> usually indicates that the key is in the <code>SEC1</code> format.</p>
+<pre style="background-color:#2b303b;color:#c0c5ce;"><code><span>~ % &gt; openssl ecparam -name prime256v1 -genkey -noout
+</span><span>-----BEGIN EC PRIVATE KEY-----
+</span><span>MHcCAQEEIM/Te/oqzVkBxVBdGYCp0kIsUO4ryvU9HNo2KVNODh6XoAoGCCqGSM49
+</span><span>AwEHoUQDQgAEkbxfrK8/qJic3VHVxgh3xmOhCGW/OxERLbC0utixI2q3lvQmNDS1
+</span><span>EOA9qTKFsxtMPGoYsgss21E0pzBfOZTomw==
+</span><span>-----END EC PRIVATE KEY-----
+</span></code></pre>
+<p>Funny enough, using the ASN.1 JavaScript Decoder seems to ambiguously parse this as a <code>PKIMessage</code> object defined in
+<a href="https://datatracker.ietf.org/doc/html/rfc4210#section-5.1">RFC4210 Section 5.1</a>:</p>
+<pre style="background-color:#2b303b;color:#c0c5ce;"><code><span>PKIMessage SEQUENCE (4 elem)
+</span><span>	- header PKIHeader [?] INTEGER 1
+</span><span>	- body PKIBody [?] OCTET STRING (32 byte) CFD37BFA2A...
+</span><span>	- protection [0] (1 elem)
+</span><span>	    - PKIProtection [?] OBJECT IDENTIFIER 1.2.840.10045.3.1.7 prime256v1 (ANSI X9.62 named elliptic curve)
+</span><span>	- extraCerts [1] (1 elem)
+</span><span>	    - SEQUENCE [?] BIT STRING (520 bit) 0000010010...
+</span></code></pre>
+<p>But in our case, this is incorrect as we should have an <code>ECPrivateKey</code> object as defined in the previously linked RFC5915.
+This <code>ASN.1</code> definition looks like:</p>
+<pre style="background-color:#2b303b;color:#c0c5ce;"><code><span>ECPrivateKey ::= SEQUENCE {
+</span><span>     version        INTEGER { ecPrivkeyVer1(1) } (ecPrivkeyVer1),
+</span><span>     privateKey     OCTET STRING,
+</span><span>     parameters [0] ECParameters {{ NamedCurve }} OPTIONAL,
+</span><span>     publicKey  [1] BIT STRING OPTIONAL
+</span><span>}
+</span></code></pre>
+<p>Which does, in fact, match our generated private key if we use a more primitive <code>ASN.1</code> parsing tool:</p>
+<pre style="background-color:#2b303b;color:#c0c5ce;"><code><span>~ % &gt; openssl ecparam -name prime256v1 -genkey -noout | openssl asn1parse
+</span><span>    0:d=0  hl=2 l= 119 cons: SEQUENCE
+</span><span>    2:d=1  hl=2 l=   1 prim: INTEGER           :01
+</span><span>    5:d=1  hl=2 l=  32 prim: OCTET STRING      [HEX DUMP]:18A01421F9...
+</span><span>   39:d=1  hl=2 l=  10 cons: cont [ 0 ]
+</span><span>   41:d=2  hl=2 l=   8 prim: OBJECT            :prime256v1
+</span><span>   51:d=1  hl=2 l=  68 cons: cont [ 1 ]
+</span><span>   53:d=2  hl=2 l=  66 prim: BIT STRING
+</span></code></pre>
+<p>We see we have a <code>SEQUENCE</code> that contains an <code>INTEGER</code> (matching <code>version</code>), an <code>OCTET STRING</code> (matching <code>privateKey</code>),
+then the name of our curve (<code>prime256v1</code>) and an optional <code>publicKey</code>, which we do not have.</p>
+<h1 id="summary">Summary</h1>
+<p>To summarize everything:</p>
+<ul>
+<li><code>ASN.1</code> is a language to define arbitrary data structures.</li>
+<li><code>DER</code> is way to encode <code>ASN.1</code> structures into bytes in a non-ambiguous way.</li>
+<li><code>PEM</code> is a way to encode bytes into a more human-friendly format that gives the user a hint as to what the data
+actually is (e.g. a private key, certificate, etc)</li>
+<li><code>PKCS#1</code> is an encoding for RSA keys. If you see <code>-----BEGIN RSA PRIVATE KEY-----</code>, this is probably a <code>PKCS#1</code> <code>DER</code>
+and <code>PEM</code> encoded file.</li>
+<li><code>PKCS#8</code> is a more generalizable encoding format for keys that supports many different types of keys. It also
+supports encrypting the <code>PEM</code> contents with a password. If you see <code>-----BEGIN PRIVATE KEY-----</code> or <code>-----BEGIN ENCRYPTED PRIVATE KEY-----</code>, this is probably a <code>PKCS#8</code> <code>DER</code> and <code>PEM</code> encoded key.</li>
+<li><code>SEC1</code> is a key format specifically for elliptic curve keys. If you see <code>-----BEGIN EC PRIVATE KEY-----</code>, this is
+probably a <code>SEC1</code> <code>DER</code> and <code>PEM</code> encoded file.</li>
+</ul>
+<p>Hope this helps to make some of these formats a bit more clear!</p>
+
+
+    </div>
+  </section>
+</body>
+
+</html>
